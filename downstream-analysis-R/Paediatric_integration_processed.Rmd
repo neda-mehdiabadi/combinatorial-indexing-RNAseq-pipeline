@@ -1,0 +1,368 @@
+---
+title: "Marker analysis of broad cell types"
+author: "Neda R. Mehdiabadi & Pooja Venkat"
+date: "26.09.2024"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(edgeR)
+library(RColorBrewer)
+library(org.Hs.eg.db)
+library(limma)
+library(Seurat)
+library(cowplot)
+library(DelayedArray)
+library(scran)
+library(NMF)
+library(workflowr)
+library(ggplot2)
+library(clustree)
+library(dplyr)
+library(gridBase)
+library(grid)
+library(speckle)
+library(scuttle)
+library(SingleCellExperiment)
+library(ggfortify)
+library(DESeq2)
+```
+
+
+```{r}
+sessionInfo()
+```
+
+Color index
+```{r}
+col = c("Cardiomyocyte"="#7570B3","Endothelial"="#E7298A",
+         "Pericytes"="#66A61E","Fibroblast"="#E6AB02",
+         "Immune"="#A6761D","Neurons"="#666666","SMC"="#1F78B4")
+```
+
+Marker
+```{r}
+Erythroid <- c("GYPA","GYPB","TFRC" )
+Prolof_Card=c("ANLN","CDK1","WEE1","E2F1")
+Cardiomyocyte <- c("ACTN2","TNNT2","ATP2A2","MYH7","TTN","ALPK3","MYH6")
+Endothelial <- c("VWF","PECAM1","ENG","EMCN")
+Pericytes <- c("PDGFRB","RGS5","KCNJ8","ABCC9")
+Fibroblast <- c("VCAN","LAMB1","DCN","COL1A2")
+Immune <- c("PTPRC","CD74","CD163","CD14")
+Neurons <- c("NRXN3","NRXN1","ERBB3")
+SMC <- c("TAGLN","MYH11","ACTA2")
+```
+
+
+```{r}
+paediatric.integrated <- readRDS("~/Desktop/dcm-paper/integrated/paed_list_fil_merge_INt_2_1_3.RDS")
+
+paediatric.integrated$Patient <- paediatric.integrated$Sample
+paediatric.integrated$Patient <- gsub("-","_",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("snrna_","",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Donor","Control",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("WU198LV","13_198",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("^(.*)_Young$", "\\1_Control",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Porrello_DCM1_DCM", "Porrello_0050_14_DCM",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Porrello_DCM2_DCM", "Porrello_0019_2_DCM",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Porrello_DCM3_DCM", "Porrello_0093_2_DCM",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Porrello_DCM4_DCM", "Porrello_0025_13_DCM",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Porrello_Young1_Control", "Porrello_0073_6_Control",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Porrello_Young2_Control", "Porrello_0001_2_Control",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("Porrello_Young3_Control", "Porrello_0051_7_Control",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("_paed", "",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("_LV0", "",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("_LV", "",paediatric.integrated$Patient)
+paediatric.integrated$Patient <- gsub("^([^_]+_)", "\\1pediatric_", paediatric.integrated$Patient)
+#paediatric.integrated$Patient <- gsub("rep[[:digit:]]","",paediatric.integrated$Patient)
+```
+
+```{r}
+DimPlot(paediatric.integrated, reduction = "umap_harmony",group.by = "harmony_clusters", split.by = "Condition_1", label = T)
+DimPlot(paediatric.integrated, reduction = "umap_harmony",group.by = "cell_type", split.by = "Condition_1", label = T, raster = F)
+
+DefaultAssay(paediatric.integrated) <- "RNA"
+paediatric.integrated.jointlayers <- JoinLayers(paediatric.integrated)
+
+Immune <- c("PTPRC","CD74","CD163","CD14")
+DefaultAssay(paediatric.integrated) <- "SCT"
+FeaturePlot(paediatric.integrated, features = "PTPRC",reduction = "umap_harmony", split.by = "Condition_1")
+
+```
+
+```{r}
+#extract metadata associated with pediatric CMs for Geneformer [harmony_clusters %in% c(0,5,7,12,14,15,16)]
+CM <- subset(paediatric.integrated, subset = harmony_clusters %in% c(0,5,7,12,14,15,16))
+write.csv(CM@meta.data, "~/Desktop/dcm-paper/data/pediatric/CM_metadata.csv")
+###
+
+#extract metadata associated with pediatric Fibs for Geneformer [harmony_clusters %in% c(1)]
+Fib <- subset(paediatric.integrated, subset = harmony_clusters %in% c(1))
+write.csv(Fib@meta.data, "~/Desktop/Fib_metadata.csv")
+###
+
+#extract metadata associated with pediatric Endo for Geneformer [harmony_clusters %in% c(2,6,10)]
+Endo <- subset(paediatric.integrated, subset = harmony_clusters %in% c(2,6,10))
+write.csv(Endo@meta.data, "~/Desktop/Endo_metadata.csv")
+###
+
+#extract metadata associated with pediatric SMC for Geneformer [harmony_clusters %in% c(9)]
+SMC <- subset(paediatric.integrated, subset = harmony_clusters %in% c(9))
+write.csv(SMC@meta.data, "~/Desktop/SMC_metadata.csv")
+###
+
+#extract metadata associated with pediatric Pericyte for Geneformer [harmony_clusters %in% c(3)]
+Pericyte <- subset(paediatric.integrated, subset = harmony_clusters %in% c(3))
+write.csv(Pericyte@meta.data, "~/Desktop/Peicyte_metadata.csv")
+###
+
+#extract metadata associated with Immune Pericyte for Geneformer [harmony_clusters %in% c(3)]
+Immune <- subset(paediatric.integrated, subset = harmony_clusters %in% c(4))
+write.csv(Immune@meta.data, "~/Desktop/pImmune_metadata.csv")
+###
+
+```
+
+```{r}
+#extract metadata associated with pediatric CMs for Geneformer [harmony_clusters %in% c(0,5,7,12,14,15,16)]
+CM <- subset(paediatric.integrated, subset = harmony_clusters %in% c(0,5,7,12,14,15,16))
+write.csv(CM@meta.data, "~/Desktop/dcm-paper/data/pediatric/CM_metadata.csv")
+###
+
+#DefaultAssay(paediatric.integrated) <- "SCT"
+#FeaturePlot(paediatric.integrated, features = "RABGAP1L",reduction = "umap_harmony", split.by = "Condition_1")
+#VlnPlot(paediatric.integrated, features = "RABGAP1L", raster = F, split.by = "Condition_1")
+
+
+
+DimPlot(paediatric.integrated, reduction = "umap_harmony",group.by = "harmony_clusters", split.by = "Condition_1", label = T)
+
+DefaultAssay(paediatric.integrated) <- "RNA"
+paediatric.integrated.jointlayers <- JoinLayers(paediatric.integrated)
+
+
+ann <- AnnotationDbi:::select(org.Hs.eg.db,keys=rownames(paediatric.integrated.jointlayers),columns=c("SYMBOL","ENTREZID","ENSEMBL","GENENAME","CHR"),keytype = "SYMBOL")
+    
+    
+m <- match(rownames(paediatric.integrated.jointlayers),ann$SYMBOL)
+ann <- ann[m,]
+table(ann$SYMBOL==rownames(paediatric.integrated.jointlayers))
+    
+mito <- grep("mitochondrial",ann$GENENAME)
+length(mito)
+    
+ribo <- grep("ribosomal",ann$GENENAME)
+length(ribo)
+    
+missingEZID <- which(is.na(ann$ENTREZID))
+length(missingEZID)
+    
+chuck <- unique(c(mito,ribo,missingEZID))
+length(chuck)
+    
+ann.keep <- ann[-chuck,]
+paediatric.integrated.jointlayers <- paediatric.integrated.jointlayers[-chuck,]
+    
+xy <- ann.keep$CHR %in% c("X","Y")
+ann.keep <- ann.keep[!xy,]
+paediatric.integrated.jointlayers <- paediatric.integrated.jointlayers[!xy,]
+
+table(ann.keep$SYMBOL==rownames(paediatric.integrated.jointlayers))
+#TRUE 
+#18620
+
+numzero.genes <- rowSums(paediatric.integrated.jointlayers@assays$RNA@layers$counts==0)
+keep.genes <- numzero.genes < (ncol(paediatric.integrated.jointlayers)-20)
+paediatric.integrated.jointlayers <- paediatric.integrated.jointlayers[keep.genes,]
+ann.keep <- ann.keep[keep.genes,]
+
+table(ann.keep$SYMBOL==rownames(paediatric.integrated.jointlayers))
+#TRUE 
+#15750 
+
+level.order <- c("Control","DCM")
+plotCellTypeProps(cluster = paediatric.integrated.jointlayers$cell_type, sample = paediatric.integrated.jointlayers$Condition_1) + scale_x_discrete(limits=level.order) + scale_fill_manual(values = col)
+
+```
+
+```{r}
+paediatric.integrated.jointlayers <- as.SingleCellExperiment(paediatric.integrated.jointlayers)
+
+paediatric.integrated.jointlayers$cell_condition <- paste(paediatric.integrated.jointlayers$cell_type, paediatric.integrated.jointlayers$Condition, sep = "_")
+
+paediatric.integrated.jointlayers$Patient_cell <- paste(paediatric.integrated.jointlayers$Sample, paediatric.integrated.jointlayers$cell_type, sep = "_")
+
+```
+
+```{r}
+load("~/Desktop/pooja-large-scale-dcm/human_c2_v5p2.rdata")
+colLabels(paediatric.integrated.jointlayers) <- factor(paediatric.integrated.jointlayers$cell_condition)
+
+summed_por <- aggregateAcrossCells(paediatric.integrated.jointlayers, 
+    id=colData(paediatric.integrated.jointlayers)[,c("cell_type", "Sample")])
+
+
+cuurent_cols <- collapseReplicates(summed_por, summed_por$Patient_cell, summed_por$Patient)
+colData(cuurent_cols)
+
+cells_list <- unique(cuurent_cols$cell_type)
+c <- 1
+for (c in 1:length(cells_list)){
+    label <- cells_list[c]
+    current <- cuurent_cols[,label==cuurent_cols$cell_type]
+    
+    y <- DGEList(counts(current), samples=colData(current), group = current$Condition, genes = ann.keep)
+
+    colnames(y) <- current$Sample
+
+    discarded <- current$ncells < 10
+    y <- y[,!discarded]
+    library(edgeR)
+    keep <-   rowSums(edgeR::cpm(y) > 1) >= 3 
+     y <- y[keep,]
+    
+    keep <- filterByExpr(y)
+   y <- y[keep, , keep.lib.sizes=FALSE]
+   
+    y <- calcNormFactors(y)
+    colgroup <- as.character(y$samples$Condition)
+
+    for (j in 1:length(colgroup)) {
+        if (colgroup[j] == "DCM" ){
+            colgroup[j] <- "navy"
+        }
+        if (colgroup[j] == "Control" ){
+            colgroup[j]  <- "red"
+        }
+    }
+
+    limma::plotMDS(edgeR::cpm(y, log=TRUE), col= colgroup)
+    
+    #pdf(paste(output_dir,"Paed_all_3rdJune_split_",label,"_celltype_MDS_b4.pdf",sep=""))
+    #limma::plotMDS(cpm(y, log=TRUE), col= colgroup)
+    #dev.off()
+    
+
+    design <- model.matrix(~ 0 + factor(Condition) + factor(Dataset) ,y$samples )
+    design0 <- model.matrix(~0+factor(Condition), y$samples)
+  
+    colnames(design) <- gsub("factor","", colnames(design))
+    colnames(design) <- gsub("\\(","", colnames(design))
+    colnames(design) <- gsub("Condition","", colnames(design))
+    colnames(design) <- gsub("Dataset","", colnames(design))
+    #colnames(design) <- gsub("Patient","", colnames(design))
+    
+    colnames(design) <- gsub("\\)","", colnames(design))
+    
+    ##design0
+    colnames(design0) <- gsub("factor","", colnames(design0))
+    colnames(design0) <- gsub("\\(","", colnames(design0))
+    colnames(design0) <- gsub("Condition","", colnames(design0))
+    colnames(design0) <- gsub("\\)","", colnames(design0))
+    
+    
+    y1 <- removeBatchEffect(edgeR::cpm(y$counts, log = T), batch = y$samples$Dataset, design =  design0)
+    limma::plotMDS( y1,col=colgroup)
+    
+    #pdf(paste(output_dir,"Paed_all_3rdJune_split_",label,"_celltype_MDS_after_b.pdf",sep=""))
+    #limma::plotMDS( y1,col=colgroup)
+    #dev.off()
+    
+    #pdf(paste(output_dir,"paed_all_3rdJune_split_",label,"_celltype_PCA_batchcorrected.pdf",sep=""))
+    #p <- autoplot(prcomp(t(y1)), data = t(y1), colour = colgroup, label = T)
+    #print(p)
+    #dev.off()
+    
+    #pdf(paste(output_dir,"paed_all_3rdJune_split_",label,"_celltype_PCA_b4_batch.pdf",sep=""))
+    #p <- autoplot(prcomp(t(cpm(y$counts, log = T))),data = t(y$counts),colour =colgroup, label = T)
+   # print(p)
+    #dev.off()
+    
+    
+
+    voomWithQualityWeights(y, design = design, plot = TRUE) -> y_vqw
+    
+    
+    contrast_matrix <- makeContrasts(DCM - Control,
+                                    levels=colnames(design))
+    
+    
+    find_de <- function(y, design ,contr.matrix) {
+      fit <- lmFit(y, design)
+      vfit <- contrasts.fit(fit, contrasts=contr.matrix)
+      efit <- eBayes(vfit )
+      top.table <- topTable(efit, sort.by = "P", n = Inf, adjust="BH")
+      return(top.table)
+    }
+    for (compari in 1:ncol(contrast_matrix)) {
+      comparison <- gsub(" - ", "vs",colnames(contrast_matrix)[compari])
+      find_de(y_vqw, design, contrast_matrix[,compari]) -> de_vqw
+      c2.id <- ids2indices(Hs.c2,de_vqw$ENTREZID)
+      reactome.id <-c2.id[grep("KEGG",names(c2.id))]
+      cardio.camera <- cameraPR(de_vqw$t,reactome.id)
+      cardio.camera$pathnames <- rownames(cardio.camera)
+      cardio.camera <- cardio.camera %>% filter(cardio.camera$FDR < 0.05)
+      write.csv(cardio.camera,paste("~/Desktop/pooja-large-scale-dcm/output/Fig1/paediatric/paediatric_kegg_",label,"_vqw.csv",sep=""))
+      #write.table(de_vqw, paste("~/Desktop/pooja-large-scale-dcm/output/Fig1/paediatric/paediatric_",comparison,"_",label,"_vqw_b.txt",sep=""), sep="\t",quote = F)
+
+    }
+    
+    
+    
+}
+
+
+```
+
+```{r}
+load("~/Desktop/pooja-large-scale-dcm/human_c2_v5p2.rdata")
+c2.id <- ids2indices(Hs.c2,de_vqw$ENTREZID)
+reactome.id <-c2.id[grep("REACTOME",names(c2.id))]
+cardio.camera <- cameraPR(de_vqw$t,reactome.id)
+cardio.camera$pathnames <- rownames(cardio.camera)
+cardio.camera <- cardio.camera %>% filter(cardio.camera$FDR < 0.05)
+write.csv(cardio.camera,"~/Desktop/pooja-large-scale-dcm/output/Fig1/kegg_paediatric_Endo.csv")
+#cardio.camera.up <- cardio.camera[cardio.camera[,2]=="Up",]
+
+index <- match(rownames(cardio.camera.up), names(reactome.id))
+#write.csv(cardio.camera.up,"~/Desktop/pooja-large-scale-dcm/REACTOME-up.csv")
+names(kegg.id[index])
+de_vqw[kegg.id[[index[14]]],]
+
+```
+
+
+```{r}
+DB <- paste("org", "Hs", "eg", "db", sep = ".")
+require(DB, character.only = TRUE)
+GO2ALLEGS <- paste("org", "Hs", "egGO2ALLEGS", sep = ".")
+EG.GO <- AnnotationDbi::toTable(get(GO2ALLEGS))
+d <- duplicated(EG.GO[, c("gene_id", "go_id", "Ontology")])
+EG.GO <- EG.GO[!d, ]
+
+index <- which(shared$LogFC > 0 & shared$fdr < 0.05)
+sig <- shared[index,]
+topgo <- goana(de=sig$ENTREZID,universe=ann.keep$ENTREZID,species="Hs")
+topgo$adjP <- p.adjust(topgo$P.DE, method="BH")
+topgo <- topgo %>% filter(topgo$P.DE < 0.05 & topgo$Ont=="BP") 
+#topgo <- topgo %>% filter(topgo$P.DE < 0.05) 
+de.by.go <- split(EG.GO$gene_id, paste(EG.GO$go_id, EG.GO$Ontology, sep="."))
+de.by.go <- lapply(de.by.go, FUN=function(x) { x[x %in% sig$ENTREZID] })
+result <- data.frame(matrix(NA,nrow = dim(topgo)[1],ncol = 5))
+for (i in 1:dim(topgo)[1]){
+  genename <- sig[sig$ENTREZID %in% de.by.go[[paste(rownames(topgo)[i],topgo$Ont[i],sep = ".")]],]
+  result[i,1] <- topgo$Term[i]
+  result[i,2] <- topgo$Ont[i]
+  result[i,3] <- topgo$P.DE[i]
+  result[i,4] <- topgo$DE[i]
+  result[i,5] <- topgo$N[i]
+  result[i,6] <- topgo$DE[i]*100/topgo$N[i]
+  vec <- c(genename$SYMBOL)
+  fvec <- shQuote(vec, type = "cmd")
+  comma_vec <- paste(fvec, collapse = ", ")
+  result[i,7] <- comma_vec
+}
+colnames(result) <- c("Term","Ont","P","noDE","N","hits","DE")
+rownames(result) <- rownames(topgo)
+```

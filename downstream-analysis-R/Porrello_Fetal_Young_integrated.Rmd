@@ -1,0 +1,232 @@
+---
+title: "Porrello_Fetal_Young_integration"
+output: html_document
+date: "2024-09-26"
+---
+```{r}
+
+
+library(edgeR)
+library(RColorBrewer)
+library(org.Hs.eg.db)
+library(limma)
+library(Seurat)
+library(cowplot)
+library(DelayedArray)
+library(scran)
+library(NMF)
+library(workflowr)
+library(ggplot2)
+library(dplyr)
+library(gridBase)
+library(grid)
+library(speckle)
+library(scuttle)
+library(SingleCellExperiment)
+library(DESeq2)
+
+```
+
+
+```{r}
+sessionInfo()
+```
+
+Color index
+```{r}
+col = c("Cardiomyocyte"="#7570B3","Endothelial"="#E7298A",
+         "Pericytes"="#66A61E","Fibroblast"="#E6AB02",
+         "Immune"="#A6761D","Neurons"="#666666","SMC"="#1F78B4")
+```
+
+Marker
+```{r}
+Erythroid <- c("GYPA","GYPB","TFRC" )
+Prolof_Card=c("ANLN","CDK1","WEE1","E2F1")
+Cardiomyocyte <- c("ACTN2","TNNT2","ATP2A2","MYH7")
+Endothelial <- c("VWF","PECAM1","ENG","EMCN")
+Pericytes <- c("PDGFRB","RGS5","KCNJ8","ABCC9")
+Fibroblast <- c("VCAN","LAMB1","DCN","COL1A2")
+Immune <- c("PTPRC","CD74","CD163","CD14")
+Neurons <- c("NRXN3","NRXN1","ERBB3")
+SMC <- c("TAGLN","MYH11","ACTA2")
+```
+
+```{r}
+
+porrello_fy <- readRDS("./integrated/Paed_por_ctrl_fetal_merge_INt_young3_all_res_0_2_annotated.RDS")
+
+```
+
+
+```{r}
+porrello_fy$Condition_1 <- porrello_fy$Condition
+porrello_fy$Condition_1 <- factor(porrello_fy$Condition_1, levels=c("Control","Fetal"))
+
+                                                    #pdf("~/Desktop/pooja-large-scale-dcm/output/Fig2/porrello_fy.pdf")
+DimPlot(porrello_fy, reduction = "umap_harmony",group.by = "cell_type", split.by = "Condition_1", cols = col)
+#dev.off()
+
+```
+```{r}
+marker_genes <- c(Cardiomyocyte,Endothelial,Pericytes,SMC, Fibroblast,Immune,Neurons)
+
+DefaultAssay(porrello_fy) <- "RNA"
+porrello_fy <- NormalizeData(porrello_fy)
+porrello_fy <- ScaleData(porrello_fy)
+
+maxcells  <- min(table(Idents(porrello_fy)))
+p <- DoHeatmap(subset(porrello_fy, downsample = maxcells), features = marker_genes)
+print(p)
+
+porrello_fy.jointlayers <- JoinLayers(porrello_fy)
+
+
+ann <- AnnotationDbi:::select(org.Hs.eg.db,keys=rownames(porrello_fy.jointlayers),columns=c("SYMBOL","ENTREZID","ENSEMBL","GENENAME","CHR"),keytype = "SYMBOL")
+    
+    
+m <- match(rownames(porrello_fy.jointlayers),ann$SYMBOL)
+ann <- ann[m,]
+table(ann$SYMBOL==rownames(porrello_fy.jointlayers))
+
+#TRUE 
+#27223 
+mito <- grep("mitochondrial",ann$GENENAME)
+length(mito)
+    
+ribo <- grep("ribosomal",ann$GENENAME)
+length(ribo)
+    
+missingEZID <- which(is.na(ann$ENTREZID))
+length(missingEZID)
+
+chuck <- unique(c(mito,ribo,missingEZID))
+length(chuck)
+
+ann.keep <- ann[-chuck,]
+porrello_fy.jointlayers <- porrello_fy.jointlayers[-chuck,]
+    
+xy <- ann.keep$CHR %in% c("X","Y")
+ann.keep <- ann.keep[!xy,]
+porrello_fy.jointlayers <- porrello_fy.jointlayers[!xy,]
+
+table(ann.keep$SYMBOL==rownames(porrello_fy.jointlayers))
+#TRUE 
+#18057
+
+numzero.genes <- rowSums(porrello_fy.jointlayers@assays$RNA@layers$counts==0)
+keep.genes <- numzero.genes < (ncol(porrello_fy.jointlayers)-20)
+porrello_fy.jointlayers <- porrello_fy.jointlayers[keep.genes,]
+ann.keep <- ann.keep[keep.genes,]
+
+table(ann.keep$SYMBOL==rownames(porrello_fy.jointlayers))
+#TRUE 
+#15735
+
+level.order <- c("Fetal","Control")
+pdf("../pooja-large-scale-dcm/output/Fig2/porrello_fy_CellType.pdf")
+plotCellTypeProps(cluster = porrello_fy.jointlayers$cell_type, sample = porrello_fy.jointlayers$Condition_1) + scale_x_discrete(limits=level.order) + scale_fill_manual(values = col)
+dev.off()
+
+```
+
+```{r}
+porrello_fy.jointlayers <- as.SingleCellExperiment(porrello_fy.jointlayers)
+
+porrello_fy.jointlayers$cell_condition <- paste(porrello_fy.jointlayers$cell_type, porrello_fy.jointlayers$Condition, sep = "_")
+
+porrello_fy.jointlayers$Patient_cell <- paste(porrello_fy.jointlayers$Sample, porrello_fy.jointlayers$cell_type, sep = "_")
+
+```
+
+```{r}
+load("~/Desktop/pooja-large-scale-dcm/human_c2_v5p2.rdata")
+colLabels(porrello_fy.jointlayers) <- factor(porrello_fy.jointlayers$cell_condition)
+
+summed_por <- aggregateAcrossCells(porrello_fy.jointlayers, 
+    id=colData(porrello_fy.jointlayers)[,c("cell_type", "Sample")])
+
+
+cuurent_cols <- summed_por
+colData(cuurent_cols)
+
+
+cells_list <- unique(cuurent_cols$cell_type)
+c <- 1
+for (c in 1:length(cells_list)){
+    label <- cells_list[c]
+    current <- cuurent_cols[,label==cuurent_cols$cell_type]
+
+    y <- DGEList(counts(current), samples=colData(current), group = current$Condition, genes = ann.keep)
+
+    colnames(y) <- current$Sample
+
+    discarded <- current$ncells < 10
+    y <- y[,!discarded]
+    
+    keep <-   rowSums(edgeR::cpm(y) > 1) >= 3 
+     y <- y[keep,]
+    
+    keep <- filterByExpr(y)
+   y <- y[keep, , keep.lib.sizes=FALSE]
+   
+    y <- calcNormFactors(y)
+    colgroup <- as.character(y$samples$Condition)
+
+    for (j in 1:length(colgroup)) {
+        if (colgroup[j] == "Control" ){
+            colgroup[j]  <- "red"
+        }
+         if (colgroup[j] == "Fetal" ){
+             colgroup[j] <- "violetred4"
+         }
+    }
+
+    limma::plotMDS(edgeR::cpm(y, log=TRUE), col= colgroup)
+
+    #design <- model.matrix(~ 0 + factor(Condition) + factor(Dataset) ,y$samples )
+    design0 <- model.matrix(~0+factor(Condition), y$samples)
+  
+    colnames(design0) <- gsub("factor","", colnames(design0))
+    colnames(design0) <- gsub("\\(","", colnames(design0))
+    colnames(design0) <- gsub("Condition","", colnames(design0))
+    colnames(design0) <- gsub("\\)","", colnames(design0))
+    
+    y1 <- removeBatchEffect(edgeR::cpm(y$counts, log = T), batch = y$samples$Dataset, design =  design0)
+    limma::plotMDS( y1,col=colgroup)
+
+    voomWithQualityWeights(y, design = design0, plot = TRUE) -> y_vqw
+    
+    
+    contrast_matrix <- makeContrasts(Fetal - Control,
+                                 levels=colnames(design0))
+    
+    
+    find_de <- function(y, design0 ,contr.matrix) {
+      fit <- lmFit(y, design0)
+      vfit <- contrasts.fit(fit, contrasts=contr.matrix)
+      efit <- eBayes(vfit )
+      top.table <- topTable(efit , sort.by = "P", n = Inf, adjust="BH")
+      return(top.table)
+    }
+    for (compari in 1:ncol(contrast_matrix)) {
+      comparison <- gsub(" - ", "vs",colnames(contrast_matrix)[compari])
+      find_de(y_vqw, design0, contrast_matrix[,compari]) -> de_vqw
+      c2.id <- ids2indices(Hs.c2,de_vqw$ENTREZID)
+      reactome.id <-c2.id[grep("REACTOME",names(c2.id))]
+      cardio.camera <- cameraPR(de_vqw$t,reactome.id)
+      cardio.camera$pathnames <- rownames(cardio.camera)
+      cardio.camera <- cardio.camera %>% filter(cardio.camera$FDR < 0.05)
+      write.csv(cardio.camera,paste("../pooja-large-scale-dcm/output/Fig2/porrello_fy_reactome_",label,"_vqw.csv",sep=""))
+      #write.table(de_vqw, paste("../pooja-large-scale-dcm/output/Fig2/porrello_fy_",comparison,"_",label,"_vqw_b.txt",sep=""), sep="\t",quote = F)
+
+
+    }
+    
+    
+    
+}
+
+
+```
+
